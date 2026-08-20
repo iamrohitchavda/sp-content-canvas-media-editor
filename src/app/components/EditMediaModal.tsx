@@ -543,15 +543,14 @@ export function EditMediaModal({ media, mediaType, post, onClose, onSave, onUplo
   }, [template]);
 
   const handleReset = useCallback(() => {
-    if (template) {
-      setState(getDefaults(template, post));
-      setSelectedId(null);
-    }
-  }, [template, post]);
-
-  const isDirty = template
-    ? JSON.stringify(state) !== JSON.stringify(getDefaults(template, post))
-    : false;
+    // Reset means reset the complete composition—not only the currently
+    // selected base template. This clears stacked templates (stored as extras),
+    // standalone elements, text edits, positions, motion and timeline ranges.
+    // The uploaded media remains, ready for a new composition.
+    setTemplate(null);
+    setState({ values: {}, layers: {}, extras: [] });
+    setSelectedId(null);
+  }, []);
 
   // What a newly-inserted sticker/badge/shape renders in until the user picks
   // its own colour — same fallback chain CustomizePanel uses for the element
@@ -705,7 +704,7 @@ export function EditMediaModal({ media, mediaType, post, onClose, onSave, onUplo
                 onSetMotionType={handleSetMotionType}
                 onReset={handleReset}
                 onShuffle={handleShuffle}
-                canReset={isDirty}
+                canReset={Boolean(template)}
               />
             )}
             </div>
