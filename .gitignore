@@ -1,0 +1,16 @@
+# Dependencies and generated frontend output
+node_modules/
+dist/
+
+# Local Koa render artifacts and user uploads
+uploads/
+exports/
+output/
+server/dist/
+
+# Local environment settings
+.env
+.env.local
+
+# OS/editor files
+.DS_Store

@@ -1,0 +1,54 @@
+@import './fonts.css';
+@import './tailwind.css';
+
+@import '../DesignSystemWeb/styles.css';
+@import './tokens.css';
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+/*
+ * Quiet, overlay-style scrollbars for panels that scroll inside the modal.
+ *
+ * The thumb is invisible until the pointer is over the area (or it has focus),
+ * so a resting panel shows no scrollbar chrome. On macOS — where scrollbars
+ * overlay the content by default — the track reserves no width, so revealing
+ * the thumb never nudges the layout. The thin, transparent-track styling keeps
+ * that behaviour consistent when a classic scrollbar is in play too.
+ */
+.scroll-area {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.scroll-area:hover,
+.scroll-area:focus-within {
+  scrollbar-color: rgba(0, 0, 0, 0.24) transparent;
+}
+.scroll-area::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.scroll-area::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-area::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+  /* Padding-box border insets the thumb so it reads as a slim pill, not a
+     block that fills the gutter edge to edge. */
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+.scroll-area:hover::-webkit-scrollbar-thumb,
+.scroll-area:focus-within::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.24);
+  background-clip: padding-box;
+}
+.scroll-area::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.38);
+  background-clip: padding-box;
+}
