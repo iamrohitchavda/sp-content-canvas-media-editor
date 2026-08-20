@@ -376,6 +376,75 @@ export function MediaStage({
   );
 }
 
+/**
+ * Extract representative frames locally in the browser for the timeline.
+ * Pointing the same video URL at eight CSS backgrounds only repeats its first
+ * frame; seek + canvas capture gives the editor an honest visual map of the
+ * clip. Object URLs from uploads work without a server. If a remote video
+ * denies canvas access, this deliberately returns no strip rather than a
+ * misleading fake thumbnail row.
+ */
+function VideoFrameStrip({ src, onPointerDown, onPointerMove, onPointerUp, onPointerCancel }: {
+  src: string;
+  onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerUp: (event: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerCancel: (event: React.PointerEvent<HTMLDivElement>) => void;
+}) {
+  const [frames, setFrames] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const video = document.createElement("video");
+    video.muted = true;
+    video.preload = "auto";
+    video.playsInline = true;
+    video.src = src;
+
+    const capture = async () => {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          video.addEventListener("loadedmetadata", () => resolve(), { once: true });
+          video.addEventListener("error", () => reject(new Error("Video metadata unavailable")), { once: true });
+          video.load();
+        });
+        const duration = video.duration;
+        if (!Number.isFinite(duration) || duration <= 0) throw new Error("Video duration unavailable");
+        const canvas = document.createElement("canvas");
+        canvas.width = 160;
+        canvas.height = 90;
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("Canvas unavailable");
+        const captured: string[] = [];
+        for (let index = 0; index < 8; index += 1) {
+          const time = Math.min(duration - 0.04, Math.max(0, duration * ((index + 0.5) / 8)));
+          await new Promise<void>((resolve, reject) => {
+            video.addEventListener("seeked", () => resolve(), { once: true });
+            video.addEventListener("error", () => reject(new Error("Video seek failed")), { once: true });
+            video.currentTime = time;
+          });
+          context.drawImage(video, 0, 0, canvas.width, canvas.height);
+          captured.push(canvas.toDataURL("image/jpeg", 0.72));
+        }
+        if (!cancelled) setFrames(captured);
+      } catch {
+        if (!cancelled) setFrames([]);
+      }
+    };
+    void capture();
+    return () => { cancelled = true; video.removeAttribute("src"); video.load(); };
+  }, [src]);
+
+  // Do not render a pretend video track if thumbnails cannot be captured.
+  if (frames?.length === 0) return null;
+  return <div style={{ flex: "1 0 48px", display: "flex", alignItems: "center", gap: "6px", minHeight: "48px", minWidth: 0 }}>
+    <span style={{ width: "104px", flexShrink: 0, color: "#5e6878", fontSize: "10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>▣ &nbsp;Video</span>
+    <div onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerCancel} style={{ flex: 1, minWidth: 0, height: "100%", minHeight: "44px", display: "flex", overflow: "hidden", borderRadius: "7px", border: "2px solid #4d5562", boxSizing: "border-box", background: "#313744", cursor: "ew-resize", touchAction: "none" }}>
+      {frames ? frames.map((frame, index) => <span key={index} style={{ flex: 1, minWidth: 0, borderRight: index === frames.length - 1 ? 0 : "1px solid rgba(255,255,255,.7)", backgroundImage: `linear-gradient(rgba(20,24,30,.08), rgba(20,24,30,.08)), url(${frame})`, backgroundSize: "cover", backgroundPosition: "center" }} />) : <span style={{ width: "100%", display: "grid", placeItems: "center", color: "#dce0e8", fontSize: "10px" }}>Loading video frames…</span>}
+    </div>
+  </div>;
+}
+
 /** A compact video-only timing editor. A selected layer is visible only in its chosen range. */
 export function ElementTimeline({
   template, state, selectedId, mediaSrc, durationInFrames, currentFrame, onSelect, onChange, isPlaying, onTogglePlay, onSeek, fullWidth = false,
@@ -544,12 +613,7 @@ export function ElementTimeline({
       {Array.from({ length: 11 }, (_, tick) => <span key={tick} style={{ borderLeft: "1px solid #d5d9e0", paddingLeft: "3px", fontSize: "9px" }}>{((durationInFrames / 30 / 10) * tick).toFixed(tick === 0 ? 0 : 1)}s</span>)}
     </div>
     <div ref={rowsRef} style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: "6px", paddingTop: "9px", paddingRight: "14px", boxSizing: "border-box", overflowY: "auto", overflowX: "hidden", scrollbarGutter: "stable" }}>
-      <div style={{ flex: "1 0 48px", display: "flex", alignItems: "center", gap: "6px", minHeight: "48px", minWidth: 0 }}>
-        <span style={{ width: "104px", flexShrink: 0, color: "#5e6878", fontSize: "10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>▣ &nbsp;Video</span>
-        <div onPointerDown={beginScrub} onPointerMove={scrub} onPointerUp={endScrub} onPointerCancel={endScrub} style={{ flex: 1, minWidth: 0, height: "100%", minHeight: "44px", display: "flex", overflow: "hidden", borderRadius: "7px", border: "2px solid #4d5562", boxSizing: "border-box", background: "#313744", cursor: "ew-resize", touchAction: "none" }}>
-          {Array.from({ length: 8 }, (_, index) => <span key={index} style={{ flex: 1, minWidth: 0, borderRight: index === 7 ? 0 : "1px solid rgba(255,255,255,.7)", backgroundImage: `linear-gradient(rgba(20,24,30,.08), rgba(20,24,30,.08)), url(${mediaSrc})`, backgroundSize: "cover", backgroundPosition: `${(index / 7) * 100}% center` }} />)}
-        </div>
-      </div>
+      <VideoFrameStrip src={mediaSrc} onPointerDown={beginScrub} onPointerMove={scrub} onPointerUp={endScrub} onPointerCancel={endScrub} />
       {rows.map((row) => <div data-timeline-id={row.id} key={row.id} style={{ flex: "1 0 30px", display: "flex", alignItems: "center", gap: "6px", minHeight: "30px", minWidth: 0 }}>
         <button
           type="button"

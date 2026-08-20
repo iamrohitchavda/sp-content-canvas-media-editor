@@ -122,6 +122,13 @@ export function EditMediaModal({ media, mediaType, post, onClose, onSave, onUplo
   const [template, setTemplate] = useState<TemplateDef | null>(null);
   const [state, setState] = useState<TemplateState>({ values: {}, layers: {}, extras: [] });
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // The editor state is immutable, so retaining the previous composition is
+  // enough to undo every canvas operation without teaching each control its
+  // own inverse operation. Selection is intentionally not part of history:
+  // Undo changes the artwork, not which inspector happens to be open.
+  const undoHistoryRef = useRef<{ template: TemplateDef | null; state: TemplateState }[]>([]);
+  const compositionRef = useRef<{ template: TemplateDef | null; state: TemplateState } | null>(null);
+  const [undoCount, setUndoCount] = useState(0);
   // The video player remains owned by MediaStage, while this dock gives its
   // timeline a full-width home beneath all three work columns.
   const [timelineDock, setTimelineDock] = useState<HTMLDivElement | null>(null);
@@ -161,6 +168,25 @@ export function EditMediaModal({ media, mediaType, post, onClose, onSave, onUplo
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose, selectedId]);
+
+  // Record one snapshot for every committed artwork change. React batches
+  // related setTemplate/setState calls, so selecting a template is one undo
+  // step rather than two. Keeping this at the composition boundary also
+  // includes drag, resize, timing, duplicate, delete, reset and panel edits.
+  useEffect(() => {
+    const previous = compositionRef.current;
+    if (!previous) {
+      compositionRef.current = { template, state };
+      return;
+    }
+    if (previous.template === template && previous.state === state) return;
+    undoHistoryRef.current.push(previous);
+    // A bounded history prevents an unusually long editing session from
+    // retaining every old canvas forever, while still giving ample undo room.
+    if (undoHistoryRef.current.length > 100) undoHistoryRef.current.shift();
+    compositionRef.current = { template, state };
+    setUndoCount(undoHistoryRef.current.length);
+  }, [template, state]);
 
   const handleSelect = useCallback((t: TemplateDef) => {
     // Selecting a second template is additive. Its layers are converted to
@@ -552,6 +578,31 @@ export function EditMediaModal({ media, mediaType, post, onClose, onSave, onUplo
     setSelectedId(null);
   }, []);
 
+  const handleUndo = useCallback(() => {
+    const previous = undoHistoryRef.current.pop();
+    if (!previous) return;
+    // Update the reference before React commits, otherwise the history effect
+    // above would treat this restoration as a brand-new edit.
+    compositionRef.current = previous;
+    setTemplate(previous.template);
+    setState(previous.state);
+    setSelectedId(null);
+    setUndoCount(undoHistoryRef.current.length);
+  }, []);
+
+  useEffect(() => {
+    const onUndoKey = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "z") return;
+      const target = event.target as HTMLElement | null;
+      // Preserve native text-field undo while someone is typing.
+      if (target?.isContentEditable || target?.tagName === "INPUT" || target?.tagName === "TEXTAREA") return;
+      event.preventDefault();
+      handleUndo();
+    };
+    window.addEventListener("keydown", onUndoKey);
+    return () => window.removeEventListener("keydown", onUndoKey);
+  }, [handleUndo]);
+
   // What a newly-inserted sticker/badge/shape renders in until the user picks
   // its own colour — same fallback chain CustomizePanel uses for the element
   // currently selected.
@@ -603,6 +654,16 @@ export function EditMediaModal({ media, mediaType, post, onClose, onSave, onUplo
             <TabLabel variant="header">{title}</TabLabel>
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
               {demoMode && <span style={{ padding: "3px 7px", borderRadius: "999px", background: "#fff3cd", color: "#795d00", fontSize: "11px", fontWeight: 700 }}>Demo mode</span>}
+              <button
+                type="button"
+                title="Undo last edit (⌘/Ctrl + Z)"
+                aria-label="Undo last edit"
+                disabled={undoCount === 0}
+                onClick={handleUndo}
+                style={{ height: "28px", padding: "0 9px", border: `1px solid ${sp.borderPrimary}`, borderRadius: "4px", background: sp.white, color: undoCount ? sp.textPrimary : sp.textTertiary, fontFamily: FONT, fontSize: "12px", fontWeight: 600, cursor: undoCount ? "pointer" : "not-allowed", opacity: undoCount ? 1 : 0.55 }}
+              >
+                ↶ Undo
+              </button>
               <label style={{ color: sp.blue, fontSize: "12px", fontWeight: 600, cursor: "pointer", paddingTop: "6px" }}>
                 Upload image or video
                 <input type="file" accept="image/*,video/*" hidden onChange={(event) => {
