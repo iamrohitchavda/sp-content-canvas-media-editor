@@ -343,7 +343,10 @@ export function MediaStage({
               onDuplicate={onDuplicate}
               onDelete={onDelete}
               previewFrame={previewFrame}
-              onCancelPreview={pauseAtFrame}
+              // Selecting a canvas element must leave video-preview mode.
+              // Keeping the paused preview frame here hid the selection
+              // toolbar (copy/delete/edit) even though the layer was selected.
+              onCancelPreview={stopPreview}
               onEmptyClick={() => {
                 if (mediaType === "video") play();
               }}
