@@ -209,7 +209,10 @@ export function MediaStage({
     const total = mediaType === "video" ? media.durationInFrames ?? 300 : template.durationInFrames;
     const fps = template.fps;
     const video = videoRef.current;
-    const initial = startFrame || previewFrame || 0;
+    // `0` is a deliberate start frame. Using `||` here silently replaced it
+    // with the current late video frame, so changing Bouncy/Gentle/Snappy
+    // often replayed after the spring had already settled.
+    const initial = startFrame ?? previewFrame ?? 0;
     if (video) {
       video.currentTime = initial / fps;
       void video.play().catch(() => {});

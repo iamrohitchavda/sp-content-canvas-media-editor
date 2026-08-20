@@ -58,10 +58,24 @@ const SPRING_CONFIG: Record<Exclude<SpringFeel, "none">, { damping: number; mass
 export function enterProgress(frame: number, fps: number, feel: SpringFeel, delay: number): number {
   if (feel === "none") return frame >= delay ? 1 : 0;
   const t = Math.max(0, (frame - delay) / fps);
-  if (feel === "gentle") return 1 - Math.exp(-7 * t);
-  const speed = feel === "snappy" ? 14 : 9;
-  const bounce = feel === "snappy" ? 0.18 : 0.28;
-  return 1 - Math.exp(-speed * t) * (1 + bounce * Math.sin((feel === "snappy" ? 20 : 14) * t));
+  const { damping, mass, stiffness } = SPRING_CONFIG[feel];
+  const omega = Math.sqrt(stiffness / mass);
+  const dampingRatio = damping / (2 * Math.sqrt(stiffness * mass));
+
+  // Unit step response of a real damped spring. This mirrors the physics
+  // used by Content Canvas / Remotion: spatial visibly overshoots, gentle is
+  // overdamped with no bounce, and snappy reaches the target much sooner.
+  if (dampingRatio < 1) {
+    const dampedOmega = omega * Math.sqrt(1 - dampingRatio * dampingRatio);
+    return 1 - Math.exp(-dampingRatio * omega * t) * (
+      Math.cos(dampedOmega * t) + (dampingRatio / Math.sqrt(1 - dampingRatio * dampingRatio)) * Math.sin(dampedOmega * t)
+    );
+  }
+  if (Math.abs(dampingRatio - 1) < 0.0001) return 1 - (1 + omega * t) * Math.exp(-omega * t);
+  const root = Math.sqrt(dampingRatio * dampingRatio - 1);
+  const r1 = -omega * (dampingRatio - root);
+  const r2 = -omega * (dampingRatio + root);
+  return 1 + (r2 * Math.exp(r1 * t) - r1 * Math.exp(r2 * t)) / (r1 - r2);
 }
 
 
