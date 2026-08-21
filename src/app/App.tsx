@@ -6,6 +6,9 @@ import { sp, FONT } from "./theme";
 import { ExportCanvas } from "./ExportCanvas";
 
 const EMPTY_MEDIA: MediaItem = { id: "empty", src: "", alt: "" };
+const RENDER_API_URL = "http://127.0.0.1:4000/api";
+const FRAMES_PER_SECOND = 30;
+const DEFAULT_VIDEO_DURATION_IN_FRAMES = 300;
 /** Set VITE_DEMO_MODE=true on Vercel for a browser-only design demo. */
 const DEMO_MODE = import.meta.env.VITE_DEMO_MODE === "true";
 
@@ -14,23 +17,62 @@ const DEMO_MODE = import.meta.env.VITE_DEMO_MODE === "true";
  * Templates bind their main line to this, so the editor never asks the user to
  * write something that already exists. Hardcoded here as a stand-in.
  */
-const POST: PostCopy = {
+const DEFAULT_POST_COPY: PostCopy = {
   headline: "Limited edition release",
   hook: "The best pieces sell out in hours",
   cta: "Let's Go"
 };
+
+const TEMPLATE_RENDER_NAMES: Record<string, string> = {
+  "five-star-rating": "rating",
+  "summer-sale": "offer",
+  "grand-opening": "opening",
+  "pro-tip": "tip",
+  "find-us": "location"
+};
+
+type ExportStatus = "idle" | "rendering" | "complete" | "failed";
+
+interface ExportState {
+  status: ExportStatus;
+  format?: MediaType;
+  downloadUrl?: string;
+  error?: string;
+}
+
+function getMediaType(file: File): MediaType | null {
+  if (file.type.startsWith("video/")) return "video";
+  if (file.type.startsWith("image/")) return "image";
+  return null;
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function readVideoDurationInFrames(file: File): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement("video");
+    const objectUrl = URL.createObjectURL(file);
+    video.preload = "metadata";
+    video.onloadedmetadata = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(Math.max(1, Math.round(video.duration * FRAMES_PER_SECOND)));
+    };
+    video.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Could not read the video duration"));
+    };
+    video.src = objectUrl;
+  });
+}
 
 export default function App() {
   if (window.location.pathname === "/export") return <ExportCanvas />;
   const [open, setOpen] = useState(true);
   const [media, setMedia] = useState<MediaItem>(EMPTY_MEDIA);
   const [mediaType, setMediaType] = useState<MediaType>("image");
-  const [exportState, setExportState] = useState<{
-    status: "idle" | "rendering" | "complete" | "failed";
-    format?: "image" | "video";
-    downloadUrl?: string;
-    error?: string;
-  }>({ status: "idle" });
+  const [exportState, setExportState] = useState<ExportState>({ status: "idle" });
 
   const handleSave = async (
     template: TemplateDef | null,
@@ -39,22 +81,15 @@ export default function App() {
     if (DEMO_MODE) return;
     if (!template || !media.src) return;
     const values = state.values;
-    const templateMap: Record<string, string> = {
-      "five-star-rating": "rating",
-      "summer-sale": "offer",
-      "grand-opening": "opening",
-      "pro-tip": "tip",
-      "find-us": "location"
-    };
     const variables = {
-      template: templateMap[template.id] ?? "rating",
+      template: TEMPLATE_RENDER_NAMES[template.id] ?? "rating",
       headline: String(
         values.address ??
           values.reviewText ??
           values.headline ??
           values.businessName ??
           values.tipText ??
-          POST.headline
+          DEFAULT_POST_COPY.headline
       ),
       hook: String(
         values.hours ??
@@ -62,14 +97,14 @@ export default function App() {
           values.tagline ??
           values.message ??
           values.tipDetail ??
-          POST.hook
+          DEFAULT_POST_COPY.hook
       ),
       cta: String(
         values.phone ??
           values.date ??
           values.ctaText ??
           values.tagline ??
-          POST.cta
+          DEFAULT_POST_COPY.cta
       ),
       accent: String(values.accentColor ?? template.previewColor),
       background: "#171720",
@@ -92,13 +127,13 @@ export default function App() {
         mediaType,
         durationInFrames:
           mediaType === "video"
-            ? (media.durationInFrames ?? 300)
+            ? (media.durationInFrames ?? DEFAULT_VIDEO_DURATION_IN_FRAMES)
             : template.durationInFrames
       })
     };
     setExportState({ status: "rendering", format: mediaType });
     try {
-      const start = await fetch("http://127.0.0.1:4000/api/renders", {
+      const start = await fetch(`${RENDER_API_URL}/renders`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ variables })
@@ -106,7 +141,7 @@ export default function App() {
       if (!start.ok) throw new Error("Could not start the export");
       const { id } = (await start.json()) as { id: string };
       const poll = async (): Promise<void> => {
-        const response = await fetch(`http://127.0.0.1:4000/api/renders/${id}`);
+        const response = await fetch(`${RENDER_API_URL}/renders/${id}`);
         const job = (await response.json()) as {
           status: string;
           error?: string;
@@ -121,7 +156,6 @@ export default function App() {
           return;
         }
         if (job.status === "failed") {
-          console.log("failed 121", job.error);
           setExportState({
             status: "failed",
             error: job.error ?? "Export failed"
@@ -132,20 +166,15 @@ export default function App() {
       };
       void poll();
     } catch (error) {
-      console.log("failed 133", error);
       setExportState({
         status: "failed",
-        error: error instanceof Error ? error.message : "Export failed"
+        error: getErrorMessage(error, "Export failed")
       });
     }
   };
 
   const handleUploadMedia = async (file: File) => {
-    const type: MediaType | null = file.type.startsWith("video/")
-      ? "video"
-      : file.type.startsWith("image/")
-        ? "image"
-        : null;
+    const type = getMediaType(file);
     if (!type) {
       setExportState({
         status: "failed",
@@ -160,20 +189,7 @@ export default function App() {
     setMediaType(type);
     setExportState({ status: "rendering" });
     try {
-      const durationInFrames =
-        type === "video"
-          ? await new Promise<number>((resolve, reject) => {
-              const video = document.createElement("video");
-              video.preload = "metadata";
-              video.onloadedmetadata = () => {
-                URL.revokeObjectURL(video.src);
-                resolve(Math.max(1, Math.round(video.duration * 30)));
-              };
-              video.onerror = () =>
-                reject(new Error("Could not read the video duration"));
-              video.src = URL.createObjectURL(file);
-            })
-          : undefined;
+      const durationInFrames = type === "video" ? await readVideoDurationInFrames(file) : undefined;
       // Static hosting has no Koa upload service or persistent disk. Keep the
       // browser object URL for this tab so visitors can test their own media
       // with the full editor and timeline, without attempting an export.
@@ -188,7 +204,7 @@ export default function App() {
         setExportState({ status: "idle" });
         return;
       }
-      const response = await fetch("http://127.0.0.1:4000/api/media", {
+      const response = await fetch(`${RENDER_API_URL}/media`, {
         method: "POST",
         headers: {
           "Content-Type": file.type,
@@ -208,10 +224,9 @@ export default function App() {
       setMediaType(type);
       setExportState({ status: "idle" });
     } catch (error) {
-      console.log("failed 188", error);
       setExportState({
         status: "failed",
-        error: `Upload failed: ${error instanceof Error ? error.message : "start the Koa server and try again"}`
+        error: `Upload failed: ${getErrorMessage(error, "start the Koa server and try again")}`
       });
     }
   };
@@ -240,7 +255,7 @@ export default function App() {
           <EditMediaModal
             media={media}
             mediaType={mediaType}
-            post={POST}
+            post={DEFAULT_POST_COPY}
             onClose={() => setOpen(false)}
             onSave={handleSave}
             onUploadMedia={handleUploadMedia}

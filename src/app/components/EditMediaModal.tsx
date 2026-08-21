@@ -30,33 +30,6 @@ interface Props {
   demoMode?: boolean;
 }
 
-/** Placeholder for a rail tab whose browse-and-insert page isn't built yet —
- *  shared by Text and Shape until each gets its real content. */
-function ComingSoonPanel({ label, body }: { label: string; body: string }) {
-  return (
-    <div
-      style={{
-        width: "240px",
-        flexShrink: 0,
-        height: "100%",
-        display: "flex",
-        flexDirection: "column",
-        gap: "16px",
-        padding: "8px",
-        background: sp.white,
-        borderRight: `1px solid ${sp.borderSub}`,
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "flex-end", width: "100%", height: "32px", flexShrink: 0 }}>
-        <TabLabel>{label}</TabLabel>
-      </div>
-      <p style={{ margin: 0, padding: "0 8px", fontFamily: FONT, fontSize: "14px", lineHeight: "18px", color: sp.textTertiary }}>
-        {body}
-      </p>
-    </div>
-  );
-}
-
 function clampUnit(v: number) {
   return Math.min(1, Math.max(0, v));
 }

@@ -99,7 +99,7 @@ export function createInterpolate(feel?: string): Interpolate {
     return (_frame, _inputRange, outputRange) => outputRange[outputRange.length - 1];
   }
   return (frame, inputRange, outputRange) => {
-    const i = Math.max(0, Math.min(inputRange.length - 2, inputRange.findIndex((v, n) => n < inputRange.length - 1 && frame <= inputRange[n + 1])));
+    const i = Math.max(0, Math.min(inputRange.length - 2, inputRange.findIndex((_value, index) => index < inputRange.length - 1 && frame <= inputRange[index + 1])));
     const from = inputRange[i], to = inputRange[i + 1];
     const p = Math.max(0, Math.min(1, (frame - from) / (to - from || 1)));
     const eased = 1 - Math.pow(1 - p, 3);
