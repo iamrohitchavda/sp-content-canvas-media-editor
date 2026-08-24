@@ -86,6 +86,10 @@ export async function renderExactCanvas(options: ExactCanvasRenderOptions) {
     // Send Chrome's native startup errors to CloudWatch. Puppeteer's generic
     // "session closed" message otherwise hides missing-library/OOM details.
     dumpio: true,
+    // Lambda container stdout is not a dependable WebSocket discovery channel.
+    // Connect over Chrome's process pipes instead of waiting for a DevTools URL.
+    pipe: true,
+    timeout: 60_000,
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
