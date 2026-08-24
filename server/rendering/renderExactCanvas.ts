@@ -56,10 +56,30 @@ async function waitForExportVideo(page: Page, timeInSeconds: number) {
         video.addEventListener("error", () => reject(new Error("Uploaded video could not load")), { once: true });
       });
     }
+    video.pause();
     await new Promise<void>((resolve, reject) => {
       video.addEventListener("seeked", () => resolve(), { once: true });
       video.addEventListener("error", () => reject(new Error("Uploaded video could not seek")), { once: true });
       video.currentTime = Math.min(time, Math.max(0, video.duration - 1 / 30));
+    });
+
+    // "seeked" means the seek operation ended, not necessarily that Chrome
+    // decoded and painted the new frame. Waiting for a presented video frame
+    // prevents intermittent black screenshots in the rendered MP4.
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      };
+      const timeout = window.setTimeout(finish, 500);
+      if ("requestVideoFrameCallback" in video) {
+        video.requestVideoFrameCallback(() => {
+          window.clearTimeout(timeout);
+          finish();
+        });
+      }
     });
   }, timeInSeconds);
 }

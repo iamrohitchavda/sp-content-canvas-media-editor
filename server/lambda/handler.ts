@@ -13,7 +13,9 @@ import { renderExactCanvas } from "../rendering/renderExactCanvas.js";
 
 const s3 = new S3Client({});
 const SIGNED_UPLOAD_SECONDS = 5 * 60;
-const SIGNED_DOWNLOAD_SECONDS = 15 * 60;
+// A render can take several minutes and demo users may inspect the result
+// before downloading. Keep the finished-file link useful for the session.
+const SIGNED_DOWNLOAD_SECONDS = 6 * 60 * 60;
 const RENDER_TEMPORARY_DIRECTORY = "/tmp/content-canvas";
 
 type ExportDocument = {
