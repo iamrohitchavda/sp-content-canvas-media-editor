@@ -73,12 +73,27 @@ export async function renderExactCanvas(options: ExactCanvasRenderOptions) {
   const { isImage, durationInFrames } = getRenderSettings(options.editorState);
   await mkdir(options.temporaryDirectory, { recursive: true });
   const framesDirectory = await mkdtemp(path.join(options.temporaryDirectory, "frames-"));
+  const chromeProfileDirectory = path.join(options.temporaryDirectory, "chrome-profile");
+  await mkdir(chromeProfileDirectory, { recursive: true });
   const encodedState = Buffer.from(options.editorState, "utf8").toString("base64");
   const frames = isImage ? [0] : Array.from({ length: durationInFrames }, (_, frame) => frame);
   const browser = await puppeteer.launch({
     headless: true,
     executablePath: process.env.REVIDEO_CHROME_PATH || undefined,
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+    // Lambda's application directory is read-only. Keep Chrome's profile and
+    // cache on the writable ephemeral disk instead.
+    userDataDir: chromeProfileDirectory,
+    // Send Chrome's native startup errors to CloudWatch. Puppeteer's generic
+    // "session closed" message otherwise hides missing-library/OOM details.
+    dumpio: true,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--no-zygote",
+      "--disable-crash-reporter"
+    ]
   });
 
   try {
