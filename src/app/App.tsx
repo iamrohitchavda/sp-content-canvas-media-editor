@@ -7,10 +7,16 @@ import { ExportCanvas } from "./ExportCanvas";
 
 const EMPTY_MEDIA: MediaItem = { id: "empty", src: "", alt: "" };
 const RENDER_API_URL = "http://127.0.0.1:4000/api";
+const RENDER_FUNCTION_URL = import.meta.env.VITE_RENDER_FUNCTION_URL?.replace(/\/$/, "");
 const FRAMES_PER_SECOND = 30;
 const DEFAULT_VIDEO_DURATION_IN_FRAMES = 300;
 /** Set VITE_DEMO_MODE=true on Vercel for a browser-only design demo. */
 const DEMO_MODE = import.meta.env.VITE_DEMO_MODE === "true";
+
+function cloudRoute(route: "upload-url" | "render") {
+  if (!RENDER_FUNCTION_URL) throw new Error("VITE_RENDER_FUNCTION_URL is not configured");
+  return `${RENDER_FUNCTION_URL}/${route}`;
+}
 
 /**
  * Copy the AI already wrote for this post, upstream in the content canvas.
@@ -81,6 +87,16 @@ export default function App() {
     if (DEMO_MODE) return;
     if (!template || !media.src) return;
     const values = state.values;
+    const editorState = JSON.stringify({
+      templateId: template.id,
+      state,
+      media,
+      mediaType,
+      durationInFrames:
+        mediaType === "video"
+          ? (media.durationInFrames ?? DEFAULT_VIDEO_DURATION_IN_FRAMES)
+          : template.durationInFrames
+    });
     const variables = {
       template: TEMPLATE_RENDER_NAMES[template.id] ?? "rating",
       headline: String(
@@ -120,19 +136,22 @@ export default function App() {
       // The demo treats its current media as a ten-second video. This makes
       // element timing part of the document sent to the exact-canvas exporter.
       // Images retain the template's one settled/static frame instead.
-      editorState: JSON.stringify({
-        templateId: template.id,
-        state,
-        media,
-        mediaType,
-        durationInFrames:
-          mediaType === "video"
-            ? (media.durationInFrames ?? DEFAULT_VIDEO_DURATION_IN_FRAMES)
-            : template.durationInFrames
-      })
+      editorState
     };
     setExportState({ status: "rendering", format: mediaType });
     try {
+      if (RENDER_FUNCTION_URL) {
+        if (!media.storageKey) throw new Error("Please upload the media again before exporting");
+        const response = await fetch(cloudRoute("render"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ editorState, mediaKey: media.storageKey })
+        });
+        const result = (await response.json()) as { downloadUrl?: string; error?: string };
+        if (!response.ok || !result.downloadUrl) throw new Error(result.error ?? "Could not render the export");
+        setExportState({ status: "complete", format: mediaType, downloadUrl: result.downloadUrl });
+        return;
+      }
       const start = await fetch(`${RENDER_API_URL}/renders`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -182,8 +201,8 @@ export default function App() {
       });
       return;
     }
-    // Give immediate feedback while the Koa upload is being persisted. The
-    // local preview is replaced by a server URL once export can use it.
+    // Keep the browser object URL for an instant canvas preview. Cloud export
+    // later supplies its private S3 key, rather than replacing this preview.
     const localPreview = URL.createObjectURL(file);
     setMedia({ id: crypto.randomUUID(), src: localPreview, alt: file.name });
     setMediaType(type);
@@ -198,6 +217,33 @@ export default function App() {
           id: crypto.randomUUID(),
           src: localPreview,
           alt: file.name,
+          durationInFrames
+        });
+        setMediaType(type);
+        setExportState({ status: "idle" });
+        return;
+      }
+      if (RENDER_FUNCTION_URL) {
+        const uploadUrlResponse = await fetch(cloudRoute("upload-url"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename: file.name, contentType: file.type })
+        });
+        const uploadDetails = (await uploadUrlResponse.json()) as { uploadUrl?: string; key?: string; error?: string };
+        if (!uploadUrlResponse.ok || !uploadDetails.uploadUrl || !uploadDetails.key) {
+          throw new Error(uploadDetails.error ?? "Could not prepare the media upload");
+        }
+        const uploadResponse = await fetch(uploadDetails.uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": file.type },
+          body: file
+        });
+        if (!uploadResponse.ok) throw new Error("Could not upload the media to S3");
+        setMedia({
+          id: crypto.randomUUID(),
+          src: localPreview,
+          alt: file.name,
+          storageKey: uploadDetails.key,
           durationInFrames
         });
         setMediaType(type);

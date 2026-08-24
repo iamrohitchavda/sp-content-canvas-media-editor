@@ -1,0 +1,116 @@
+import path from "node:path";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
+import puppeteer from "puppeteer";
+import type { Page } from "puppeteer";
+
+const FRAME_RATE = 30;
+const OUTPUT_WIDTH = 1080;
+const OUTPUT_HEIGHT = 1920;
+
+export interface ExactCanvasRenderOptions {
+  editorState: string;
+  destination: string;
+  frontendUrl: string;
+  temporaryDirectory: string;
+}
+
+function runCommand(command: string, args: string[]) {
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, { stdio: "inherit" });
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`Command failed (${code}): ${command}`));
+    });
+  });
+}
+
+function getRenderSettings(editorState: string) {
+  try {
+    const document = JSON.parse(editorState) as {
+      durationInFrames?: unknown;
+      mediaType?: unknown;
+    };
+    const requestedDuration = Number(document.durationInFrames);
+    return {
+      isImage: document.mediaType === "image",
+      durationInFrames:
+        Number.isFinite(requestedDuration) && requestedDuration > 0
+          ? Math.round(requestedDuration)
+          : 90
+    };
+  } catch {
+    throw new Error("The export editor state is invalid");
+  }
+}
+
+async function waitForExportVideo(page: Page, timeInSeconds: number) {
+  await page.evaluate(async (time) => {
+    const video = document.querySelector<HTMLVideoElement>("video[data-export-video]");
+    if (!video) return;
+    if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
+      await new Promise<void>((resolve, reject) => {
+        video.addEventListener("loadedmetadata", () => resolve(), { once: true });
+        video.addEventListener("error", () => reject(new Error("Uploaded video could not load")), { once: true });
+      });
+    }
+    await new Promise<void>((resolve, reject) => {
+      video.addEventListener("seeked", () => resolve(), { once: true });
+      video.addEventListener("error", () => reject(new Error("Uploaded video could not seek")), { once: true });
+      video.currentTime = Math.min(time, Math.max(0, video.duration - 1 / 30));
+    });
+  }, timeInSeconds);
+}
+
+/**
+ * Screenshots the public /export page frame-by-frame. This deliberately uses
+ * the same React export component as the editor, keeping the rendered result
+ * aligned with the preview instead of rebuilding overlay layout in the server.
+ */
+export async function renderExactCanvas(options: ExactCanvasRenderOptions) {
+  const { isImage, durationInFrames } = getRenderSettings(options.editorState);
+  await mkdir(options.temporaryDirectory, { recursive: true });
+  const framesDirectory = await mkdtemp(path.join(options.temporaryDirectory, "frames-"));
+  const encodedState = Buffer.from(options.editorState, "utf8").toString("base64");
+  const frames = isImage ? [0] : Array.from({ length: durationInFrames }, (_, frame) => frame);
+  const browser = await puppeteer.launch({
+    headless: true,
+    executablePath: process.env.REVIDEO_CHROME_PATH || undefined,
+    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+  });
+
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT, deviceScaleFactor: 1 });
+    for (const frame of frames) {
+      await page.goto(
+        `${options.frontendUrl}/export?frame=${frame}&data=${encodeURIComponent(encodedState)}`,
+        { waitUntil: "domcontentloaded", timeout: 120_000 }
+      );
+      await page.evaluate(async () => document.fonts.ready);
+      await waitForExportVideo(page, frame / FRAME_RATE);
+      await page.screenshot({
+        path: isImage
+          ? options.destination
+          : path.join(framesDirectory, `frame-${String(frame).padStart(3, "0")}.png`),
+        clip: { x: 0, y: 0, width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT }
+      });
+    }
+  } finally {
+    await browser.close();
+  }
+
+  try {
+    if (!isImage) {
+      await runCommand(process.env.FFMPEG_PATH || ffmpegInstaller.path, [
+        "-y", "-framerate", String(FRAME_RATE),
+        "-i", path.join(framesDirectory, "frame-%03d.png"),
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", options.destination
+      ]);
+    }
+  } finally {
+    await rm(framesDirectory, { recursive: true, force: true });
+  }
+}

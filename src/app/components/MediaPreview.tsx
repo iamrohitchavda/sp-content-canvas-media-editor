@@ -17,6 +17,8 @@ export interface MediaItem {
   id: string;
   src: string;
   alt: string;
+  /** Private S3 key used by the Lambda renderer. Never exposed as a public URL. */
+  storageKey?: string;
   /** Real video length at 30fps. Omitted for a static image. */
   durationInFrames?: number;
 }

@@ -9,9 +9,13 @@
     "build": "npm run typecheck && vite build",
     "check": "npm run build",
     "studio": "revideo editor --projectFile ./src/revideo/project.tsx",
-    "server": "tsc -p server && node server/dist/server.js"
+    "server": "tsc -p server && node server/dist/server.js",
+    "lambda:check": "tsc -p server"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1116.0",
+    "@aws-sdk/s3-request-presigner": "^3.1116.0",
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@fontsource/source-sans-pro": "^5.3.0",
     "@koa/cors": "^5.0.0",
     "@koa/router": "^15.7.0",
@@ -21,6 +25,7 @@
     "@revideo/renderer": "^0.10.3",
     "koa": "^3.2.1",
     "koa-bodyparser": "^4.4.1",
+    "puppeteer": "^25.8.0",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   },
@@ -28,6 +33,7 @@
     "@revideo/cli": "0.10.3",
     "@revideo/ui": "^0.10.3",
     "@revideo/vite-plugin": "^0.10.3",
+    "@types/aws-lambda": "^8.10.162",
     "@types/koa": "^3.0.3",
     "@types/koa__cors": "^5.0.1",
     "@types/koa-bodyparser": "^4.3.13",

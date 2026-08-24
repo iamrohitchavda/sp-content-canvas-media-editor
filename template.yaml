@@ -1,0 +1,68 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Content Canvas synchronous short-media renderer
+
+Parameters:
+  FrontendUrl:
+    Type: String
+    Description: Public Vercel URL that Lambda opens at /export.
+  AllowedOrigin:
+    Type: String
+    Description: Exact browser origin allowed to call the Function URL and S3.
+
+Resources:
+  MediaBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ["content-type"]
+            AllowedMethods: [PUT, GET, HEAD]
+            AllowedOrigins: [!Ref AllowedOrigin]
+            ExposedHeaders: [ETag]
+            MaxAge: 300
+
+  RenderFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      DockerContext: .
+      Dockerfile: Dockerfile.lambda
+      DockerTag: content-canvas-renderer
+    Properties:
+      PackageType: Image
+      Architectures: [x86_64]
+      MemorySize: 6144
+      Timeout: 900
+      EphemeralStorage:
+        Size: 10240
+      Environment:
+        Variables:
+          MEDIA_BUCKET: !Ref MediaBucket
+          FRONTEND_URL: !Ref FrontendUrl
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref MediaBucket
+      FunctionUrlConfig:
+        # This makes the demo callable directly from Vercel. Add Cognito or a
+        # signed application token before exposing an unrestricted public app.
+        AuthType: NONE
+        Cors:
+          AllowCredentials: false
+          AllowHeaders: [content-type]
+          AllowMethods: [POST]
+          AllowOrigins: [!Ref AllowedOrigin]
+          MaxAge: 300
+
+Outputs:
+  RenderFunctionUrl:
+    Description: Set this as VITE_RENDER_FUNCTION_URL in Vercel.
+    Value: !GetAtt RenderFunctionUrl.FunctionUrl
+  MediaBucketName:
+    Description: Private bucket containing uploads and generated exports.
+    Value: !Ref MediaBucket

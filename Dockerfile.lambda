@@ -1,0 +1,19 @@
+# Lambda runs the renderer from this Linux image. Puppeteer downloads the Linux
+# Chrome binary during npm ci; ffmpeg-installer provides the matching ffmpeg.
+FROM node:20-bookworm AS build
+
+WORKDIR /build
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY server ./server
+RUN npx tsc -p server
+
+FROM public.ecr.aws/lambda/nodejs:20
+
+WORKDIR ${LAMBDA_TASK_ROOT}
+ENV PUPPETEER_CACHE_DIR=${LAMBDA_TASK_ROOT}/.cache/puppeteer
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+COPY --from=build /build/server/dist ./server/dist
+
+CMD ["server/dist/lambda/handler.handler"]

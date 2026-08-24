@@ -4,11 +4,10 @@ import cors from "@koa/cors";
 import bodyParser from "koa-bodyparser";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { mkdir, rename, stat, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, rename, stat } from "node:fs/promises";
 import { createReadStream, createWriteStream } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
-import puppeteer from "puppeteer";
+import { renderExactCanvas } from "./rendering/renderExactCanvas.js";
 
 type Variables = Record<string, string | number | boolean>;
 type Job = {
@@ -24,107 +23,16 @@ const mediaDir = path.resolve(dirname, "../../uploads");
 const jobs = new Map<string, Job>();
 let queue: Promise<void> = Promise.resolve();
 
-function command(command: string, args: string[]) {
-  return new Promise<void>((resolve, reject) => {
-    const process = spawn(command, args, { stdio: "inherit" });
-    process.once("error", reject);
-    process.once("exit", (code) =>
-      code === 0
-        ? resolve()
-        : reject(new Error(`Command failed (${code}): ${command}`))
-    );
-  });
-}
-
-async function renderExactCanvas(job: Job, destination: string) {
+async function renderLocalCanvas(job: Job, destination: string) {
   const editorState = job.variables.editorState;
   if (typeof editorState !== "string")
     throw new Error("The export is missing its editor state");
-  let durationInFrames = 90;
-  let isImageExport = false;
-  try {
-    const document = JSON.parse(editorState) as { durationInFrames?: unknown; mediaType?: unknown };
-    isImageExport = document.mediaType === "image";
-    const requestedDuration = Number(document.durationInFrames);
-    // The uploaded video's metadata supplies the real frame count at 30fps.
-    if (Number.isFinite(requestedDuration) && requestedDuration > 0)
-      durationInFrames = Math.round(requestedDuration);
-  } catch {
-    throw new Error("The export editor state is invalid");
-  }
-  const tempDir = await mkdtemp(path.join(exportDir, "frames-"));
-  const chrome =
-    process.env.REVIDEO_CHROME_PATH ??
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-  const ffmpeg =
-    process.env.FFMPEG_PATH ??
-    path.resolve(
-      dirname,
-      "../../node_modules/@ffmpeg-installer/darwin-arm64/ffmpeg"
-    );
-  const frontend = process.env.FRONTEND_URL ?? "http://127.0.0.1:5174";
-  try {
-    const browser = await puppeteer.launch({
-      headless: true,
-      executablePath: chrome
-    });
-    const page = await browser.newPage();
-    await page.setViewport({ width: 1080, height: 1920, deviceScaleFactor: 1 });
-    const data = Buffer.from(editorState, "utf8").toString("base64");
-    const frames = isImageExport ? [0] : Array.from({ length: durationInFrames }, (_, frame) => frame);
-    for (const frame of frames) {
-      await page.goto(
-        `${frontend}/export?frame=${frame}&data=${encodeURIComponent(data)}`,
-        // A <video preload="auto"> can keep a network request open for its
-        // entire duration, so networkidle0 is never a valid readiness signal.
-        // The explicit seek below is the authoritative media-ready check.
-        { waitUntil: "domcontentloaded", timeout: 120_000 }
-      );
-      // Text width controls and line wraps are only stable once the page's
-      // web fonts are ready. Without this, Chrome can capture the first paint
-      // in a fallback font and produce different line breaks from the editor.
-      await page.evaluate(async () => {
-        await document.fonts.ready;
-      });
-      // Video exports reuse the uploaded source. Seek the HTML video to the
-      // exact frame before capturing the overlay canvas above it.
-      await page.evaluate(async (time) => {
-        const video = document.querySelector<HTMLVideoElement>("video[data-export-video]");
-        if (!video) return;
-        if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
-          await new Promise<void>((resolve, reject) => {
-            video.addEventListener("loadedmetadata", () => resolve(), { once: true });
-            video.addEventListener("error", () => reject(new Error("Uploaded video could not load")), { once: true });
-          });
-        }
-        await new Promise<void>((resolve, reject) => {
-          video.addEventListener("seeked", () => resolve(), { once: true });
-          video.addEventListener("error", () => reject(new Error("Uploaded video could not seek")), { once: true });
-          video.currentTime = Math.min(time, Math.max(0, video.duration - 1 / 30));
-        });
-      }, frame / 30);
-      await page.screenshot({
-        path: isImageExport ? destination : path.join(tempDir, `frame-${String(frame).padStart(3, "0")}.png`),
-        clip: { x: 0, y: 0, width: 1080, height: 1920 }
-      });
-    }
-    await browser.close();
-    if (isImageExport) return;
-    await command(ffmpeg, [
-      "-y",
-      "-framerate",
-      "30",
-      "-i",
-      path.join(tempDir, "frame-%03d.png"),
-      "-c:v",
-      "libx264",
-      "-pix_fmt",
-      "yuv420p",
-      destination
-    ]);
-  } finally {
-    await rm(tempDir, { recursive: true, force: true });
-  }
+  await renderExactCanvas({
+    editorState,
+    destination,
+    frontendUrl: process.env.FRONTEND_URL ?? "http://127.0.0.1:5174",
+    temporaryDirectory: exportDir
+  });
 }
 
 async function run(job: Job) {
@@ -135,7 +43,7 @@ async function run(job: Job) {
     const extension = document.mediaType === "image" ? "png" : "mp4";
     const destination = path.join(exportDir, `${job.id}.${extension}`);
     const workingFile = path.join(exportDir, `${job.id}.working.${extension}`);
-    await renderExactCanvas(job, workingFile);
+    await renderLocalCanvas(job, workingFile);
     await rename(workingFile, destination);
     job.file = destination;
     job.status = "complete";
