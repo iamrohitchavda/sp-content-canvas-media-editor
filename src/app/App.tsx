@@ -37,7 +37,7 @@ const TEMPLATE_RENDER_NAMES: Record<string, string> = {
   "find-us": "location"
 };
 
-type ExportStatus = "idle" | "rendering" | "complete" | "failed";
+type ExportStatus = "idle" | "uploading" | "rendering" | "complete" | "failed";
 
 interface ExportState {
   status: ExportStatus;
@@ -206,7 +206,7 @@ export default function App() {
     const localPreview = URL.createObjectURL(file);
     setMedia({ id: crypto.randomUUID(), src: localPreview, alt: file.name });
     setMediaType(type);
-    setExportState({ status: "rendering" });
+    setExportState({ status: "uploading", format: type });
     try {
       const durationInFrames = type === "video" ? await readVideoDurationInFrames(file) : undefined;
       // Static hosting has no Koa upload service or persistent disk. Keep the
@@ -305,6 +305,11 @@ export default function App() {
             onClose={() => setOpen(false)}
             onSave={handleSave}
             onUploadMedia={handleUploadMedia}
+            busyStatus={
+              exportState.status === "uploading" || exportState.status === "rendering"
+                ? exportState.status
+                : undefined
+            }
             demoMode={DEMO_MODE}
           />
         </>
@@ -323,8 +328,24 @@ export default function App() {
             color: sp.textPrimary
           }}
         >
-          {exportState.status === "rendering" &&
-            `Rendering your ${exportState.format === "image" ? "image" : "video"}…`}
+          {(exportState.status === "uploading" || exportState.status === "rendering") && (
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <span
+                aria-hidden="true"
+                style={{
+                  width: "16px",
+                  height: "16px",
+                  border: `2px solid ${sp.blueDisabled}`,
+                  borderTopColor: sp.blue,
+                  borderRadius: "50%",
+                  animation: "content-canvas-spin .8s linear infinite"
+                }}
+              />
+              {exportState.status === "uploading"
+                ? `Uploading your ${exportState.format === "image" ? "image" : "video"}…`
+                : `Rendering your ${exportState.format === "image" ? "image" : "video"}…`}
+            </div>
+          )}
           {exportState.status === "failed" &&
             `Export failed: ${exportState.error}`}
           {exportState.status === "complete" && (
@@ -337,6 +358,7 @@ export default function App() {
           )}
         </div>
       )}
+      <style>{"@keyframes content-canvas-spin { to { transform: rotate(360deg); } }"}</style>
     </div>
   );
 }

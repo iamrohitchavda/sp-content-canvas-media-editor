@@ -26,6 +26,8 @@ interface Props {
   onClose: () => void;
   onSave: (template: TemplateDef | null, state: TemplateState) => void;
   onUploadMedia: (file: File) => void;
+  /** Prevent exporting while an upload or another export is in progress. */
+  busyStatus?: "uploading" | "rendering";
   /** Browser-only Vercel demo: edit locally, but never export. */
   demoMode?: boolean;
 }
@@ -90,7 +92,7 @@ function templateLayersAsExtras(template: TemplateDef, post?: PostCopy): ExtraLa
   });
 }
 
-export function EditMediaModal({ media, mediaType, post, onClose, onSave, onUploadMedia, demoMode = false }: Props) {
+export function EditMediaModal({ media, mediaType, post, onClose, onSave, onUploadMedia, busyStatus, demoMode = false }: Props) {
   const [activeTab, setActiveTab] = useState<EditorTab>("templates");
   const [template, setTemplate] = useState<TemplateDef | null>(null);
   const [state, setState] = useState<TemplateState>({ values: {}, layers: {}, extras: [] });
@@ -779,7 +781,7 @@ export function EditMediaModal({ media, mediaType, post, onClose, onSave, onUplo
         >
           <button
             type="button"
-            disabled={!template || demoMode}
+            disabled={!template || demoMode || Boolean(busyStatus)}
             onClick={() => onSave(template, state)}
             style={{
               minWidth: "80px",
@@ -787,16 +789,22 @@ export function EditMediaModal({ media, mediaType, post, onClose, onSave, onUplo
               padding: "0 16px",
               borderRadius: "2px",
               border: "none",
-              background: template && !demoMode ? sp.blue : sp.blueDisabled,
+              background: template && !demoMode && !busyStatus ? sp.blue : sp.blueDisabled,
               color: sp.white,
               fontSize: "14px",
               fontWeight: 400,
               lineHeight: "18px",
               fontFamily: FONT,
-              cursor: template && !demoMode ? "pointer" : "not-allowed",
+              cursor: template && !demoMode && !busyStatus ? "pointer" : "not-allowed",
             }}
           >
-            {demoMode ? "Export unavailable in demo" : "Save"}
+            {demoMode
+              ? "Export unavailable in demo"
+              : busyStatus === "uploading"
+                ? "Uploading…"
+                : busyStatus === "rendering"
+                  ? "Rendering…"
+                  : "Save"}
           </button>
         </div>
       </div>
