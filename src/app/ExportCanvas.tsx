@@ -1,3 +1,4 @@
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { EditableCanvas } from "./components/EditableCanvas";
 import { blankTemplate, templates } from "./templates";
 import type { TemplateState } from "./templates/schema";
@@ -10,6 +11,16 @@ type ExportData = {
   media?: { src: string; alt: string; durationInFrames?: number };
   mediaType?: "image" | "video";
 };
+
+declare global {
+  interface Window {
+    /**
+     * Rendering-only bridge used by Puppeteer. It updates the already-loaded
+     * React canvas rather than navigating to a new `/export?frame=...` page.
+     */
+    __contentCanvasSetFrame?: (frame: number) => Promise<void>;
+  }
+}
 
 function readData(): ExportData | null {
   try {
@@ -27,9 +38,36 @@ function readData(): ExportData | null {
 export function ExportCanvas() {
   const data = readData();
   const parameters = new URLSearchParams(window.location.search);
-  const frame = Number(parameters.get("frame") ?? 89);
+  const initialFrame = Number(parameters.get("frame") ?? 0);
+  const [frame, setFrame] = useState(() => Math.max(0, initialFrame));
+  const renderedFrame = useRef(frame);
+  const resolvePendingFrame = useRef<(() => void) | null>(null);
   const overlayOnly = parameters.get("overlay") === "1";
   const template = [...templates, blankTemplate].find((item) => item.id === data?.templateId);
+
+  useLayoutEffect(() => {
+    renderedFrame.current = frame;
+    resolvePendingFrame.current?.();
+    resolvePendingFrame.current = null;
+  }, [frame]);
+
+  useEffect(() => {
+    window.__contentCanvasSetFrame = (nextFrame) => new Promise((resolve) => {
+      const safeFrame = Math.max(0, Math.round(nextFrame));
+      if (safeFrame === renderedFrame.current) {
+        resolve();
+        return;
+      }
+
+      resolvePendingFrame.current = resolve;
+      setFrame(safeFrame);
+    });
+
+    return () => {
+      delete window.__contentCanvasSetFrame;
+    };
+  }, []);
+
   if (!template || !data) return <div>Invalid export data</div>;
   const noop = () => {};
   return <div style={{ margin: 0, width: 1080, height: 1920, overflow: "hidden", position: "relative", background: overlayOnly ? "transparent" : "#000", fontFamily: FONT }}>

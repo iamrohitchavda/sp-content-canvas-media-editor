@@ -48,9 +48,9 @@ function getRenderSettings(editorState: string) {
 }
 
 /**
- * Screenshots the public /export page frame-by-frame. This deliberately uses
- * the same React export component as the editor, keeping the rendered result
- * aligned with the preview instead of rebuilding overlay layout in the server.
+ * Screenshots the public /export page frame-by-frame. The page is opened once
+ * and React updates its frame in place, avoiding a full navigation for every
+ * frame while still using the exact same layer tree as the editor.
  */
 export async function renderExactCanvas(options: ExactCanvasRenderOptions) {
   const { isImage, mediaSource, durationInFrames } = getRenderSettings(options.editorState);
@@ -87,12 +87,24 @@ export async function renderExactCanvas(options: ExactCanvasRenderOptions) {
   try {
     const page = await browser.newPage();
     await page.setViewport({ width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT, deviceScaleFactor: 1 });
+    await page.goto(
+      `${options.frontendUrl}/export?frame=0&overlay=${isImage ? "0" : "1"}&data=${encodeURIComponent(encodedState)}`,
+      { waitUntil: "domcontentloaded", timeout: 120_000 }
+    );
+    await page.evaluate(async () => document.fonts.ready);
+    await page.waitForFunction(
+      () => typeof (window as Window & { __contentCanvasSetFrame?: unknown }).__contentCanvasSetFrame === "function",
+      { timeout: 30_000 }
+    );
+
     for (const frame of frames) {
-      await page.goto(
-        `${options.frontendUrl}/export?frame=${frame}&overlay=${isImage ? "0" : "1"}&data=${encodeURIComponent(encodedState)}`,
-        { waitUntil: "domcontentloaded", timeout: 120_000 }
-      );
-      await page.evaluate(async () => document.fonts.ready);
+      await page.evaluate(async (nextFrame) => {
+        const setFrame = (window as Window & {
+          __contentCanvasSetFrame?: (frame: number) => Promise<void>;
+        }).__contentCanvasSetFrame;
+        if (!setFrame) throw new Error("The export canvas frame bridge is unavailable");
+        await setFrame(nextFrame);
+      }, frame);
       await page.screenshot({
         path: isImage
           ? options.destination
